@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 from nasa_data import get_nasa_power_data
 
@@ -21,7 +22,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🌱 FieldShift")
+st.title("FieldShift")
 
 st.subheader(
     "NASA 데이터를 활용한 농업 의사결정 지원 플랫폼"
@@ -34,35 +35,136 @@ st.write(
 
 st.divider()
 
-
-REGIONS = {
-    "전북특별자치도 김제시": (35.8036, 126.8808),
-    "전라남도 해남군": (34.5736, 126.5990),
-    "강원특별자치도 평창군": (37.3700, 128.3900),
-    "경상북도 안동시": (36.5684, 128.7294),
-    "충청남도 논산시": (36.1872, 127.0987)
-}
-
-
 st.header("지역 선택")
 
-region = st.selectbox(
-    "분석할 지역을 선택하세요",
-    list(REGIONS.keys())
-)
+try:
+    regions_df = pd.read_csv(
+        "data/regions_national.csv",
+        encoding="utf-8-sig"
+    )
 
-latitude, longitude = REGIONS[region]
+    required_columns = [
+        "sido",
+        "sigungu",
+        "latitude",
+        "longitude",
+        "agriculture_type"
+    ]
 
-st.write(
-    f"선택한 지역: {region}"
-)
+    missing_columns = [
+        column
+        for column in required_columns
+        if column not in regions_df.columns
+    ]
 
-st.caption(
-    f"분석 좌표: 위도 {latitude}, 경도 {longitude}"
-)
+    if missing_columns:
+        st.error(
+            f"지역 데이터에 필요한 열이 없습니다: {missing_columns}"
+        )
+        st.stop()
+
+    regions_df["sido"] = (
+        regions_df["sido"].astype(str).str.strip()
+    )
+
+    regions_df["sigungu"] = (
+        regions_df["sigungu"].astype(str).str.strip()
+    )
+
+    regions_df["latitude"] = pd.to_numeric(
+        regions_df["latitude"],
+        errors="coerce"
+    )
+
+    regions_df["longitude"] = pd.to_numeric(
+        regions_df["longitude"],
+        errors="coerce"
+    )
+
+    regions_df = regions_df.dropna(
+        subset=[
+            "sido",
+            "sigungu",
+            "latitude",
+            "longitude"
+        ]
+    )
+
+    regions_df = regions_df[
+        regions_df["latitude"].between(-90, 90)
+        & regions_df["longitude"].between(-180, 180)
+    ]
+
+    if regions_df.empty:
+        st.error("사용할 수 있는 지역 좌표가 없습니다.")
+        st.stop()
+
+    sido_options = sorted(
+        regions_df["sido"].unique().tolist()
+    )
+
+    selected_sido = st.selectbox(
+        "① 도 또는 광역시를 선택하세요",
+        sido_options
+    )
+
+    sido_regions = regions_df[
+        regions_df["sido"] == selected_sido
+    ].copy()
+
+    sigungu_options = sorted(
+        sido_regions["sigungu"].unique().tolist()
+    )
+
+    selected_sigungu = st.selectbox(
+        "② 시·군·구를 선택하세요",
+        sigungu_options
+    )
+
+    selected_region = sido_regions[
+        sido_regions["sigungu"] == selected_sigungu
+    ].iloc[0]
+
+    latitude = float(selected_region["latitude"])
+    longitude = float(selected_region["longitude"])
+
+    region_aliases = {
+        ("강원", "평창군"): "강원특별자치도 평창군",
+        ("전라", "김제시"): "전북특별자치도 김제시",
+        ("전라", "해남군"): "전라남도 해남군"
+    }
+
+    region = region_aliases.get(
+        (selected_sido, selected_sigungu),
+        f"{selected_sido} {selected_sigungu}"
+    )
+
+    region_display = f"{selected_sido} {selected_sigungu}"
+
+    st.success(
+        f"선택한 지역: {region_display}"
+    )
+
+    st.caption(
+        f"농업 유형: {selected_region['agriculture_type']}"
+    )
+
+    st.caption(
+        f"분석 좌표: 위도 {latitude}, 경도 {longitude}"
+    )
+
+    st.caption(
+        f"현재 등록된 전국 지역 수: {len(regions_df)}개"
+    )
+
+except Exception as error:
+    st.error(
+        f"지역 데이터를 불러오지 못했습니다: {error}"
+    )
+    st.stop()
+
 
 st.divider()
-
 
 st.header("NASA 환경 데이터 분석")
 
@@ -73,7 +175,6 @@ st.caption(
 
 @st.cache_data(ttl=21600)
 def load_environment_data(lat, lon):
-
     return get_nasa_power_data(
         lat,
         lon
@@ -81,7 +182,6 @@ def load_environment_data(lat, lon):
 
 
 try:
-
     with st.spinner(
         "NASA POWER 데이터를 수집하고 있습니다..."
     ):
@@ -90,6 +190,10 @@ try:
             latitude,
             longitude
         )
+
+    if daily_data.empty:
+        st.error("NASA POWER 데이터가 비어 있습니다.")
+        st.stop()
 
     st.success(
         "NASA POWER 데이터 수집 완료"
@@ -203,9 +307,7 @@ st.divider()
 
 st.header("작물별 환경 적합성 비교")
 
-
 try:
-
     crop_data = load_crop_requirements()
 
     st.subheader("작물별 온도 적합성 비교")
@@ -299,9 +401,7 @@ st.divider()
 
 st.header("윤작 전략 비교")
 
-
 try:
-
     all_strategies = load_rotation_strategies()
 
     region_strategies = all_strategies[
@@ -311,13 +411,13 @@ try:
     if region_strategies.empty:
 
         st.warning(
-            f"{region}에 등록된 윤작 전략이 아직 없습니다."
+            f"{region_display}에 등록된 윤작 전략이 아직 없습니다."
         )
 
     else:
 
         st.write(
-            f"선택한 지역: {region}"
+            f"선택한 지역: {region_display}"
         )
 
         st.subheader("전략 설명")
@@ -329,8 +429,7 @@ try:
             ):
 
                 st.write(
-                    f"작물 순서: "
-                    f"{strategy['crop_sequence']}"
+                    f"작물 순서: {strategy['crop_sequence']}"
                 )
 
                 st.write(
@@ -344,7 +443,7 @@ try:
         )
 
         render_rotation_ui(
-            region,
+            region_display,
             rotation_results
         )
 
@@ -365,4 +464,8 @@ st.divider()
 
 st.caption(
     "FieldShift | NASA Earth observation 기반 농업 의사결정 지원"
+)
+
+st.caption(
+    "지역 좌표는 대표 지점이며 실제 농경지 측정값과 다를 수 있습니다."
 )
