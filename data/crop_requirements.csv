@@ -1,0 +1,11 @@
+crop,optimal_temp_min_C,optimal_temp_max_C,water_requirement,soil_condition,growing_days,season
+벼,20,30,high,논토양,120,여름
+콩,20,30,medium,배수 양호한 토양,100,여름
+보리,10,20,medium,배수 양호한 토양,180,겨울
+밀,12,24,medium,배수 양호한 토양,180,겨울
+옥수수,18,30,high,배수 양호한 토양,120,여름
+감자,15,20,medium,배수 양호한 토양,100,봄
+고구마,20,30,medium,배수 양호한 토양,150,여름
+배추,15,20,medium,배수 양호한 토양,90,가을
+양파,13,24,medium,배수 양호한 토양,180,겨울
+마늘,10,20,medium,배수 양호한 토양,210,겨울
