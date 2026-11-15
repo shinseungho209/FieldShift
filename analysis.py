@@ -17,6 +17,129 @@ SEASON_MONTHS = {
 }
 
 
+ANALYSIS_TEXT = {
+    "ko": {
+        "missing_date": "일별 데이터에 date 열이 없습니다.",
+        "missing_crop": "작물 데이터에 crop 열이 없습니다.",
+        "missing_temp": "분석 가능한 기온 데이터가 없습니다.",
+        "check_required": "자료 확인 필요",
+        "insufficient_data": "온도 또는 재배 일정 자료 부족",
+        "no_period_data": "분석 기간 데이터 없음",
+        "temperature_match": "재배 기간 일평균 기온 범위 일치율",
+        "calendar_required": "재배 일정 확인 필요",
+        "calendar_available": "대표 재배 달력 자료 있음",
+        "calendar_check": "재배 달력 확인 필요",
+        "rainfall_reference": (
+            "재배 기간 누적 강수량 참고값이며 "
+            "실제 작물 이용 수분량이나 관개 필요량은 아님"
+        ),
+        "single_crop": "단작 후보",
+        "rotation": "윤작 후보",
+        "calendar_candidate": "월별 일정상 후보",
+        "gap": "작물 사이 약",
+        "month_gap": "개월 간격",
+        "rotation_score": (
+            "두 작물의 기온 일치율 평균. "
+            "실제 윤작 효과를 검증한 점수는 아님"
+        ),
+        "data_required": "자료 확인 필요",
+        "provisional": "잠정",
+    },
+    "en": {
+        "missing_date": "Daily data is missing the date column.",
+        "missing_crop": "Crop data is missing the crop column.",
+        "missing_temp": "No valid temperature data available for analysis.",
+        "check_required": "Data verification required",
+        "insufficient_data": "Insufficient temperature or crop calendar data",
+        "no_period_data": "No data available for the analysis period",
+        "temperature_match": (
+            "Percentage of growing-period days within "
+            "the daily mean temperature range"
+        ),
+        "calendar_required": "Crop calendar verification required",
+        "calendar_available": "Representative crop calendar available",
+        "calendar_check": "Crop calendar needs verification",
+        "rainfall_reference": (
+            "Reference value for cumulative growing-period precipitation. "
+            "It does not represent crop-available water or irrigation demand."
+        ),
+        "single_crop": "Single-crop candidate",
+        "rotation": "Crop rotation candidate",
+        "calendar_candidate": "Candidate based on monthly calendar",
+        "gap": "Approximate gap between crops:",
+        "month_gap": "month",
+        "rotation_score": (
+            "Average temperature-match percentage of the two crops. "
+            "This score does not validate actual crop rotation benefits."
+        ),
+        "data_required": "Data verification required",
+        "provisional": "Provisional",
+    },
+}
+
+
+CONFIDENCE_TRANSLATIONS = {
+    "잠정": "Provisional",
+    "부분검증": "Partially verified",
+    "부분 검증": "Partially verified",
+    "검증됨": "Verified",
+    "자료 확인 필요": "Data verification required",
+    "미검증": "Unverified",
+    "높음": "High",
+    "중간": "Medium",
+    "낮음": "Low",
+}
+
+
+def analysis_text(language, key):
+    language_dict = ANALYSIS_TEXT.get(
+        language,
+        ANALYSIS_TEXT["ko"]
+    )
+
+    return language_dict.get(
+        key,
+        ANALYSIS_TEXT["ko"].get(key, key)
+    )
+
+
+def safe_text(value, fallback=""):
+    if value is None:
+        return fallback
+
+    try:
+        if pd.isna(value):
+            return fallback
+    except (TypeError, ValueError):
+        pass
+
+    text = str(value).strip()
+
+    if text.lower() in {"nan", "none", "null"}:
+        return fallback
+
+    return text
+
+
+def translate_confidence(value):
+    text = safe_text(value)
+
+    if not text:
+        return ""
+
+    parts = [
+        part.strip()
+        for part in text.split("/")
+    ]
+
+    translated = [
+        CONFIDENCE_TRANSLATIONS.get(part, part)
+        for part in parts
+    ]
+
+    return " / ".join(translated)
+
+
 def to_number(value):
     result = pd.to_numeric(
         pd.Series([value]),
@@ -26,11 +149,13 @@ def to_number(value):
     return result
 
 
-def prepare_daily_data(daily_df):
+def prepare_daily_data(daily_df, language="ko"):
     data = daily_df.copy()
 
     if "date" not in data.columns:
-        raise ValueError("일별 데이터에 date 열이 없습니다.")
+        raise ValueError(
+            analysis_text(language, "missing_date")
+        )
 
     data["date"] = pd.to_datetime(
         data["date"],
@@ -73,7 +198,8 @@ def parse_growing_days(value):
 
 
 def load_crop_requirements(
-    path="data/crop_requirements.csv"
+    path="data/crop_requirements.csv",
+    language="ko"
 ):
     crops = pd.read_csv(
         path,
@@ -81,7 +207,9 @@ def load_crop_requirements(
     )
 
     if "crop" not in crops.columns:
-        raise ValueError("작물 데이터에 crop 열이 없습니다.")
+        raise ValueError(
+            analysis_text(language, "missing_crop")
+        )
 
     crops["crop"] = (
         crops["crop"]
@@ -122,12 +250,27 @@ def load_crop_requirements(
 
     text_defaults = {
         "season": "",
-        "water_requirement": "자료 확인 필요",
-        "soil_condition": "자료 확인 필요",
-        "temperature_confidence": "잠정",
-        "calendar_confidence": "잠정",
-        "verification_status": "잠정",
-        "notes": ""
+        "water_requirement": analysis_text(
+            language, "data_required"
+        ),
+        "soil_condition": analysis_text(
+            language, "data_required"
+        ),
+        "temperature_confidence": analysis_text(
+            language, "provisional"
+        ),
+        "calendar_confidence": analysis_text(
+            language, "provisional"
+        ),
+        "verification_status": analysis_text(
+            language, "provisional"
+        ),
+        "notes": "",
+        "crop_en": "",
+        "water_requirement_en": "",
+        "soil_condition_en": "",
+        "season_en": "",
+        "notes_en": ""
     }
 
     for column, default in text_defaults.items():
@@ -284,11 +427,20 @@ def analyze_monthly_rainfall(daily_df):
     ).round(2)
 
 
-def compare_crop_temperature(daily_df, crop_df):
-    data = prepare_daily_data(daily_df)
+def compare_crop_temperature(
+    daily_df,
+    crop_df,
+    language="ko"
+):
+    data = prepare_daily_data(
+        daily_df,
+        language
+    )
 
     if data["temperature_C"].notna().sum() == 0:
-        raise ValueError("분석 가능한 기온 데이터가 없습니다.")
+        raise ValueError(
+            analysis_text(language, "missing_temp")
+        )
 
     results = []
 
@@ -301,12 +453,18 @@ def compare_crop_temperature(daily_df, crop_df):
         if minimum is None or months is None:
             results.append({
                 "crop": name,
-                "optimal_temperature": "기준 확인 필요",
-                "analysis_period": "계산 제외",
+                "optimal_temperature": analysis_text(
+                    language, "check_required"
+                ),
+                "analysis_period": analysis_text(
+                    language, "check_required"
+                ),
                 "matching_days": None,
                 "total_days": 0,
                 "matching_days_percent": None,
-                "analysis_status": "온도 또는 재배 일정 자료 부족"
+                "analysis_status": analysis_text(
+                    language, "insufficient_data"
+                )
             })
             continue
 
@@ -320,7 +478,9 @@ def compare_crop_temperature(daily_df, crop_df):
             matching_days = None
             total_days = 0
             percentage = None
-            status = "분석 기간 데이터 없음"
+            status = analysis_text(
+                language, "no_period_data"
+            )
         else:
             matched = period["temperature_C"].between(
                 minimum,
@@ -333,7 +493,9 @@ def compare_crop_temperature(daily_df, crop_df):
                 matched.mean() * 100,
                 1
             )
-            status = "재배 기간 일평균 기온 범위 일치율"
+            status = analysis_text(
+                language, "temperature_match"
+            )
 
         results.append({
             "crop": name,
@@ -342,6 +504,8 @@ def compare_crop_temperature(daily_df, crop_df):
             ),
             "analysis_period": (
                 f"{months[0]}월~{months[-1]}월"
+                if language == "ko"
+                else f"{months[0]}–{months[-1]}"
             ),
             "matching_days": matching_days,
             "total_days": total_days,
@@ -352,8 +516,15 @@ def compare_crop_temperature(daily_df, crop_df):
     return pd.DataFrame(results)
 
 
-def compare_crop_rainfall(daily_df, crop_df):
-    data = prepare_daily_data(daily_df)
+def compare_crop_rainfall(
+    daily_df,
+    crop_df,
+    language="ko"
+):
+    data = prepare_daily_data(
+        daily_df,
+        language
+    )
 
     results = []
 
@@ -365,7 +536,15 @@ def compare_crop_rainfall(daily_df, crop_df):
                 "crop": crop["crop"],
                 "growing_period_rainfall_mm": None,
                 "water_requirement": crop["water_requirement"],
-                "analysis_status": "재배 일정 확인 필요"
+                "water_requirement_en": crop.get(
+                    "water_requirement_en", ""
+                ),
+                "analysis_status": analysis_text(
+                    language, "calendar_required"
+                ),
+                "analysis_status_en": (
+                    "Crop calendar verification required"
+                )
             })
             continue
 
@@ -385,9 +564,16 @@ def compare_crop_rainfall(daily_df, crop_df):
                 else None
             ),
             "water_requirement": crop["water_requirement"],
-            "analysis_status": (
-                "재배 기간 누적 강수량 참고값이며 "
-                "실제 작물 이용 수분량이나 관개 필요량은 아님"
+            "water_requirement_en": crop.get(
+                "water_requirement_en", ""
+            ),
+            "analysis_status": analysis_text(
+                language, "rainfall_reference"
+            ),
+            "analysis_status_en": (
+                "Reference value for cumulative growing-period "
+                "precipitation. It does not represent crop-available "
+                "water or irrigation demand."
             )
         })
 
@@ -418,10 +604,79 @@ def check_rotation_order(first, second):
     return gap
 
 
+def get_crop_display_name(crop, language="en"):
+    if language == "en":
+        return (
+            safe_text(crop.get("crop_en"))
+            or safe_text(crop.get("crop"))
+        )
+
+    return safe_text(crop.get("crop"))
+
+
+def get_crop_english_value(crop, english_column, korean_column):
+    return (
+        safe_text(crop.get(english_column))
+        or safe_text(crop.get(korean_column))
+    )
+
+
+def build_candidate_crop(crop):
+    name = safe_text(crop.get("crop"))
+
+    return {
+        "crop": name,
+        "crop_en": get_crop_display_name(crop, "en"),
+        "temperature_score": None,
+        "calendar": get_crop_calendar(crop),
+        "temperature_confidence": safe_text(
+            crop.get("temperature_confidence")
+        ),
+        "calendar_confidence": safe_text(
+            crop.get("calendar_confidence")
+        ),
+        "water_requirement": safe_text(
+            crop.get("water_requirement")
+        ),
+        "water_requirement_en": get_crop_english_value(
+            crop,
+            "water_requirement_en",
+            "water_requirement"
+        ),
+        "soil_condition": safe_text(
+            crop.get("soil_condition")
+        ),
+        "soil_condition_en": get_crop_english_value(
+            crop,
+            "soil_condition_en",
+            "soil_condition"
+        ),
+        "notes": safe_text(crop.get("notes")),
+        "notes_en": get_crop_english_value(
+            crop,
+            "notes_en",
+            "notes"
+        )
+    }
+
+
+def make_calendar_gap_text(gap, language="en"):
+    if language == "ko":
+        return f"작물 사이 약 {gap}개월 간격"
+
+    unit = "month" if gap == 1 else "months"
+
+    return (
+        f"Approximate gap between crops: "
+        f"{gap} {unit}"
+    )
+
+
 def generate_rotation_candidates(
     crop_scores,
     crop_df,
-    max_candidates=30
+    max_candidates=30,
+    language="ko"
 ):
     if crop_scores.empty or crop_df.empty:
         return pd.DataFrame()
@@ -433,7 +688,7 @@ def generate_rotation_candidates(
     candidates = []
 
     for _, crop in crop_df.iterrows():
-        name = crop["crop"]
+        name = safe_text(crop.get("crop"))
         score_info = score_lookup.get(name, {})
 
         score = to_number(
@@ -443,37 +698,51 @@ def generate_rotation_candidates(
         if pd.isna(score):
             continue
 
-        candidates.append({
-            "crop": name,
-            "temperature_score": float(score),
-            "calendar": get_crop_calendar(crop),
-            "temperature_confidence": crop[
-                "temperature_confidence"
-            ],
-            "calendar_confidence": crop[
-                "calendar_confidence"
-            ],
-            "water_requirement": crop[
-                "water_requirement"
-            ],
-            "soil_condition": crop[
-                "soil_condition"
-            ],
-            "notes": crop["notes"]
-        })
+        candidate = build_candidate_crop(crop)
+        candidate["temperature_score"] = float(score)
+
+        candidates.append(candidate)
 
     results = []
 
     for crop in candidates:
-        calendar_status = (
+        calendar_status_ko = (
             "대표 재배 달력 자료 있음"
             if crop["calendar"] is not None
             else "재배 달력 확인 필요"
         )
 
+        calendar_status_en = (
+            "Representative crop calendar available"
+            if crop["calendar"] is not None
+            else "Crop calendar needs verification"
+        )
+
+        strategy_ko = (
+            f"단작 후보: {crop['crop']}"
+        )
+
+        strategy_en = (
+            f"Single-crop candidate: {crop['crop_en']}"
+        )
+
+        analysis_status_ko = (
+            "재배 기간 일평균 기온 범위 일치율"
+        )
+
+        analysis_status_en = (
+            "Percentage of growing-period days within "
+            "the daily mean temperature range"
+        )
+
         results.append({
-            "strategy": f"단작 후보: {crop['crop']}",
+            "strategy": (
+                strategy_ko if language == "ko"
+                else strategy_en
+            ),
+            "strategy_en": strategy_en,
             "crop_sequence": crop["crop"],
+            "crop_sequence_en": crop["crop_en"],
             "temperature_score": round(
                 crop["temperature_score"],
                 1
@@ -483,23 +752,42 @@ def generate_rotation_candidates(
                 1
             ),
             "crop_count": 1,
-            "calendar_status": calendar_status,
+            "calendar_status": (
+                calendar_status_ko if language == "ko"
+                else calendar_status_en
+            ),
+            "calendar_status_en": calendar_status_en,
             "temperature_confidence": crop[
                 "temperature_confidence"
             ],
+            "temperature_confidence_en": translate_confidence(
+                crop["temperature_confidence"]
+            ),
             "calendar_confidence": crop[
                 "calendar_confidence"
             ],
+            "calendar_confidence_en": translate_confidence(
+                crop["calendar_confidence"]
+            ),
             "water_requirement": crop[
                 "water_requirement"
+            ],
+            "water_requirement_en": crop[
+                "water_requirement_en"
             ],
             "soil_condition": crop[
                 "soil_condition"
             ],
+            "soil_condition_en": crop[
+                "soil_condition_en"
+            ],
             "analysis_status": (
-                "재배 기간의 일평균 기온 범위 일치율"
+                analysis_status_ko if language == "ko"
+                else analysis_status_en
             ),
-            "notes": crop["notes"]
+            "analysis_status_en": analysis_status_en,
+            "notes": crop["notes"],
+            "notes_en": crop["notes_en"]
         })
 
     for first, second in itertools.permutations(
@@ -516,42 +804,118 @@ def generate_rotation_candidates(
             + second["temperature_score"]
         ) / 2
 
-        sequence = (
+        sequence_ko = (
             f"{first['crop']} → {second['crop']}"
         )
 
+        sequence_en = (
+            f"{first['crop_en']} → {second['crop_en']}"
+        )
+
+        strategy_ko = (
+            f"윤작 후보: {sequence_ko}"
+        )
+
+        strategy_en = (
+            f"Crop rotation candidate: {sequence_en}"
+        )
+
+        calendar_status_ko = (
+            f"월별 일정상 후보 · 작물 사이 약 {gap}개월 간격"
+        )
+
+        calendar_status_en = (
+            f"Candidate based on monthly calendar · "
+            f"{make_calendar_gap_text(gap, 'en')}"
+        )
+
+        water_ko = (
+            f"{first['crop']}: {first['water_requirement']} / "
+            f"{second['crop']}: {second['water_requirement']}"
+        )
+
+        water_en = (
+            f"{first['crop_en']}: {first['water_requirement_en']} / "
+            f"{second['crop_en']}: {second['water_requirement_en']}"
+        )
+
+        soil_ko = (
+            f"{first['crop']}: {first['soil_condition']} / "
+            f"{second['crop']}: {second['soil_condition']}"
+        )
+
+        soil_en = (
+            f"{first['crop_en']}: {first['soil_condition_en']} / "
+            f"{second['crop_en']}: {second['soil_condition_en']}"
+        )
+
+        notes_ko = " / ".join(
+            value for value in [
+                first["notes"],
+                second["notes"]
+            ] if value
+        )
+
+        notes_en = " / ".join(
+            value for value in [
+                first["notes_en"],
+                second["notes_en"]
+            ] if value
+        )
+
+        analysis_status_ko = (
+            "두 작물의 기온 일치율 평균. "
+            "실제 윤작 효과를 검증한 점수는 아님"
+        )
+
+        analysis_status_en = (
+            "Average temperature-match percentage of the two crops. "
+            "This score does not validate actual crop rotation benefits."
+        )
+
         results.append({
-            "strategy": f"윤작 후보: {sequence}",
-            "crop_sequence": sequence,
+            "strategy": (
+                strategy_ko if language == "ko"
+                else strategy_en
+            ),
+            "strategy_en": strategy_en,
+            "crop_sequence": sequence_ko,
+            "crop_sequence_en": sequence_en,
             "temperature_score": round(score, 1),
             "ranking_score": round(score, 1),
             "crop_count": 2,
             "calendar_status": (
-                f"월별 일정상 후보 · 작물 사이 약 {gap}개월 간격"
+                calendar_status_ko if language == "ko"
+                else calendar_status_en
             ),
+            "calendar_status_en": calendar_status_en,
             "temperature_confidence": (
                 f"{first['temperature_confidence']} / "
                 f"{second['temperature_confidence']}"
+            ),
+            "temperature_confidence_en": (
+                f"{first['temperature_confidence'] and translate_confidence(first['temperature_confidence'])} / "
+                f"{second['temperature_confidence'] and translate_confidence(second['temperature_confidence'])}"
             ),
             "calendar_confidence": (
                 f"{first['calendar_confidence']} / "
                 f"{second['calendar_confidence']}"
             ),
-            "water_requirement": (
-                f"{first['crop']}: {first['water_requirement']} / "
-                f"{second['crop']}: {second['water_requirement']}"
+            "calendar_confidence_en": (
+                f"{first['calendar_confidence'] and translate_confidence(first['calendar_confidence'])} / "
+                f"{second['calendar_confidence'] and translate_confidence(second['calendar_confidence'])}"
             ),
-            "soil_condition": (
-                f"{first['crop']}: {first['soil_condition']} / "
-                f"{second['crop']}: {second['soil_condition']}"
-            ),
+            "water_requirement": water_ko,
+            "water_requirement_en": water_en,
+            "soil_condition": soil_ko,
+            "soil_condition_en": soil_en,
             "analysis_status": (
-                "두 작물의 기온 일치율 평균. "
-                "실제 윤작 효과를 검증한 점수는 아님"
+                analysis_status_ko if language == "ko"
+                else analysis_status_en
             ),
-            "notes": (
-                f"{first['notes']} / {second['notes']}"
-            )
+            "analysis_status_en": analysis_status_en,
+            "notes": notes_ko,
+            "notes_en": notes_en
         })
 
     result = pd.DataFrame(results)

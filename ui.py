@@ -1,12 +1,63 @@
 import streamlit as st
 import pandas as pd
 
+from translations import t, translate_columns
 
-def safe_text(value):
-    if pd.isna(value):
-        return "자료 없음"
 
-    text = str(value)
+@st.cache_data
+def load_crop_translation():
+    try:
+        crop_data = pd.read_csv(
+            "data/crop_requirements.csv",
+            encoding="utf-8-sig"
+        )
+
+        if "crop" not in crop_data.columns:
+            return {}
+
+        translation = {}
+
+        for _, row in crop_data.iterrows():
+            korean = str(row.get("crop", "")).strip()
+            english = str(row.get("crop_en", "")).strip()
+
+            if not korean or korean == "nan":
+                continue
+
+            translation[korean] = {
+                "crop": (
+                    english
+                    if english and english != "nan"
+                    else korean
+                )
+            }
+
+        return translation
+
+    except (
+        FileNotFoundError,
+        pd.errors.ParserError,
+        UnicodeDecodeError
+    ):
+        return {}
+
+
+def safe_text(value, language="ko"):
+    fallback = "No data" if language == "en" else "자료 없음"
+
+    if value is None:
+        return fallback
+
+    try:
+        if pd.isna(value):
+            return fallback
+    except (TypeError, ValueError):
+        pass
+
+    text = str(value).strip()
+
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return fallback
 
     text = text.replace("~~", "～")
     text = text.replace("~", "～")
@@ -14,119 +65,422 @@ def safe_text(value):
     return text
 
 
-def render_rotation_ui(region, rotation_results):
-    st.subheader("자동 생성된 재배 전략 후보")
+def translate_crop_names(value, crop_translation):
+    text = str(value)
+
+    for korean, data in crop_translation.items():
+        text = text.replace(
+            korean,
+            data["crop"]
+        )
+
+    return text
+
+
+def get_display_value(
+    row,
+    korean_column,
+    english_column,
+    language
+):
+    if language == "en" and english_column in row.index:
+        value = row[english_column]
+
+        if pd.notna(value) and str(value).strip():
+            return safe_text(value, language)
+
+    if korean_column in row.index:
+        return safe_text(
+            row[korean_column],
+            language
+        )
+
+    return "No data" if language == "en" else "자료 없음"
+
+
+def get_language_value(
+    row,
+    korean_column,
+    english_column,
+    language,
+    crop_translation=None
+):
+    value = get_display_value(
+        row,
+        korean_column,
+        english_column,
+        language
+    )
+
+    if (
+        language == "en"
+        and crop_translation is not None
+        and value not in {"No data", "자료 없음"}
+    ):
+        value = translate_crop_names(
+            value,
+            crop_translation
+        )
+
+    return value
+
+
+def get_strategy_label(row, language, crop_translation):
+    if language == "en":
+        value = get_display_value(
+            row,
+            "strategy",
+            "strategy_en",
+            language
+        )
+
+        return translate_crop_names(
+            value,
+            crop_translation
+        )
+
+    return safe_text(
+        row.get("strategy"),
+        language
+    )
+
+
+def get_crop_sequence(row, language, crop_translation):
+    value = get_language_value(
+        row,
+        "crop_sequence",
+        "crop_sequence_en",
+        language,
+        crop_translation
+    )
+
+    return value
+
+
+def get_calendar_status(row, language):
+    return get_language_value(
+        row,
+        "calendar_status",
+        "calendar_status_en",
+        language
+    )
+
+
+def get_analysis_status(row, language):
+    return get_language_value(
+        row,
+        "analysis_status",
+        "analysis_status_en",
+        language
+    )
+
+
+def get_confidence(row, korean_column, english_column, language):
+    value = get_language_value(
+        row,
+        korean_column,
+        english_column,
+        language
+    )
+
+    if language == "en":
+        replacements = {
+            "잠정": "Preliminary",
+            "부분검증": "Partially verified",
+            "부분 검증": "Partially verified",
+            "검증됨": "Verified",
+            "자료 확인 필요": "Data verification required",
+            "미검증": "Unverified",
+            "높음": "High",
+            "중간": "Medium",
+            "낮음": "Low"
+        }
+
+        for korean, english in replacements.items():
+            value = value.replace(korean, english)
+
+    return value
+
+
+def get_chart_label(row, language, crop_translation):
+    sequence = get_crop_sequence(
+        row,
+        language,
+        crop_translation
+    )
+
+    if language == "en":
+        return sequence
+
+    return sequence
+
+
+def render_rotation_ui(
+    region,
+    rotation_results,
+    language="ko"
+):
+    labels = t(language, "rotation_ui")
+    crop_translation = load_crop_translation()
+
+    st.subheader(labels["title"])
 
     if rotation_results.empty:
-        st.warning(
-            "현재 데이터 조건에서 생성된 후보가 없습니다."
-        )
+        st.warning(labels["empty"])
         return
 
-    st.caption(
-        f"{region}의 NASA 기후 데이터와 작물 조건을 활용한 후보입니다."
-    )
+    if language == "en":
+        st.caption(
+            f"Candidates for {region} based on NASA climate data "
+            "and crop requirements."
+        )
+    else:
+        st.caption(
+            f"{region}{labels['description']}"
+        )
 
-    st.info(
-        "기온 기반 순위 점수는 재배 기간의 일평균 기온이 "
-        "입력된 온도 범위에 들어온 날의 비율입니다. "
-        "수확량이나 실제 재배 성공 확률을 뜻하지 않습니다."
-    )
+    st.info(labels["score_info"])
 
     for _, row in rotation_results.iterrows():
 
         with st.container(border=True):
 
+            strategy = get_strategy_label(
+                row,
+                language,
+                crop_translation
+            )
+
             st.subheader(
-                f"{int(row['rank'])}위 · {row['strategy']}"
+                f"{int(row['rank'])}. {strategy}"
             )
 
             col1, col2 = st.columns(2)
 
             col1.metric(
-                "온도 조건 일치율",
-                f"{row['temperature_score']:.1f}%"
+                labels["temperature_score"],
+                f"{float(row['temperature_score']):.1f}%"
             )
 
             col2.metric(
-                "포함 작물 수",
-                f"{int(row['crop_count'])}개"
+                labels["crop_count"],
+                (
+                    str(int(row["crop_count"]))
+                    if language == "en"
+                    else f"{int(row['crop_count'])}개"
+                )
+            )
+
+            crop_sequence = get_crop_sequence(
+                row,
+                language,
+                crop_translation
             )
 
             st.write(
-                f"작물 조합: {safe_text(row['crop_sequence'])}"
+                f"{labels['crop_sequence']}: {crop_sequence}"
+            )
+
+            calendar_status = get_calendar_status(
+                row,
+                language
             )
 
             st.caption(
-                f"재배 일정: {safe_text(row['calendar_status'])}"
+                f"{labels['calendar']}: {calendar_status}"
+            )
+
+            temperature_confidence = get_confidence(
+                row,
+                "temperature_confidence",
+                "temperature_confidence_en",
+                language
             )
 
             st.caption(
-                f"온도 기준 신뢰도: "
-                f"{safe_text(row['temperature_confidence'])}"
+                f"{labels['temperature_confidence']}: "
+                f"{temperature_confidence}"
+            )
+
+            calendar_confidence = get_confidence(
+                row,
+                "calendar_confidence",
+                "calendar_confidence_en",
+                language
             )
 
             st.caption(
-                f"재배 달력 신뢰도: "
-                f"{safe_text(row['calendar_confidence'])}"
+                f"{labels['calendar_confidence']}: "
+                f"{calendar_confidence}"
             )
 
-            st.write("물 요구 특성")
+            st.write(labels["water"])
 
-            st.write(
-                safe_text(row["water_requirement"])
+            water_value = get_language_value(
+                row,
+                "water_requirement",
+                "water_requirement_en",
+                language,
+                crop_translation
             )
 
-            st.write("토양 조건")
+            st.write(water_value)
 
-            st.write(
-                safe_text(row["soil_condition"])
+            st.write(labels["soil"])
+
+            soil_value = get_language_value(
+                row,
+                "soil_condition",
+                "soil_condition_en",
+                language,
+                crop_translation
+            )
+
+            st.write(soil_value)
+
+            analysis_status = get_analysis_status(
+                row,
+                language
             )
 
             st.caption(
-                f"평가 방식: {safe_text(row['analysis_status'])}"
+                f"{labels['evaluation']}: {analysis_status}"
             )
 
-            notes = safe_text(row.get("notes", ""))
+            notes_value = get_language_value(
+                row,
+                "notes",
+                "notes_en",
+                language,
+                crop_translation
+            )
 
-            if notes and notes != "자료 없음":
-                with st.expander("작물별 참고 사항"):
-                    st.write(notes)
+            if notes_value not in {
+                "자료 없음",
+                "No data"
+            }:
+                with st.expander(labels["notes"]):
+                    st.write(notes_value)
 
-    st.subheader("전략별 기온 기반 점수 비교")
+    st.subheader(labels["chart"])
 
-    chart_data = rotation_results[
-        ["strategy", "ranking_score"]
-    ].copy()
+    chart_rows = []
 
-    chart_data = chart_data.set_index("strategy")
+    for _, row in rotation_results.iterrows():
+        chart_rows.append({
+            "strategy": get_chart_label(
+                row,
+                language,
+                crop_translation
+            ),
+            "score": float(row["ranking_score"])
+        })
+
+    chart_data = pd.DataFrame(chart_rows)
+
+    chart_data = chart_data.set_index(
+        "strategy"
+    )
+
+    chart_data = chart_data.rename(
+        columns={
+            "score": labels["temperature_score"]
+        }
+    )
 
     st.bar_chart(
         chart_data,
         horizontal=True
     )
 
-    with st.expander("전체 후보 데이터 보기"):
+    with st.expander(labels["table"]):
 
         display_data = rotation_results.copy()
 
-        text_columns = [
-            "strategy",
-            "crop_sequence",
-            "calendar_status",
-            "temperature_confidence",
-            "calendar_confidence",
-            "water_requirement",
-            "soil_condition",
-            "analysis_status",
-            "notes"
+        if language == "en":
+
+            display_data["strategy"] = display_data.apply(
+                lambda row: get_strategy_label(
+                    row,
+                    language,
+                    crop_translation
+                ),
+                axis=1
+            )
+
+            display_data["crop_sequence"] = display_data.apply(
+                lambda row: get_crop_sequence(
+                    row,
+                    language,
+                    crop_translation
+                ),
+                axis=1
+            )
+
+            column_pairs = [
+                ("calendar_status", "calendar_status_en"),
+                (
+                    "temperature_confidence",
+                    "temperature_confidence_en"
+                ),
+                (
+                    "calendar_confidence",
+                    "calendar_confidence_en"
+                ),
+                ("water_requirement", "water_requirement_en"),
+                ("soil_condition", "soil_condition_en"),
+                ("analysis_status", "analysis_status_en"),
+                ("notes", "notes_en")
+            ]
+
+            for korean_column, english_column in column_pairs:
+                if english_column in display_data.columns:
+                    display_data[korean_column] = display_data[
+                        english_column
+                    ].where(
+                        display_data[english_column].notna()
+                        & display_data[english_column].astype(str).str.strip().ne(""),
+                        display_data[korean_column]
+                    )
+
+        else:
+            display_data["strategy"] = display_data[
+                "strategy"
+            ].apply(
+                lambda value: safe_text(value, language)
+            )
+
+            display_data["crop_sequence"] = display_data[
+                "crop_sequence"
+            ].apply(
+                lambda value: safe_text(value, language)
+            )
+
+        hidden_english_columns = [
+            "strategy_en",
+            "crop_sequence_en",
+            "calendar_status_en",
+            "temperature_confidence_en",
+            "calendar_confidence_en",
+            "water_requirement_en",
+            "soil_condition_en",
+            "analysis_status_en",
+            "notes_en"
         ]
 
-        for column in text_columns:
-            if column in display_data.columns:
-                display_data[column] = (
-                    display_data[column].apply(safe_text)
-                )
+        display_data = display_data.drop(
+            columns=[
+                column
+                for column in hidden_english_columns
+                if column in display_data.columns
+            ],
+            errors="ignore"
+        )
+
+        display_data = translate_columns(
+            display_data,
+            language
+        )
 
         st.dataframe(
             display_data,
@@ -134,56 +488,55 @@ def render_rotation_ui(region, rotation_results):
             hide_index=True
         )
 
-    st.warning(
-        "현재 순위는 기온 조건과 월별 재배 일정에 기반합니다. "
-        "강수량은 참고 정보이며 토양 수분, 토양 건강, 병해충, "
-        "경제성, 실제 수확량은 점수에 포함하지 않습니다."
-    )
+    st.warning(labels["warning"])
 
 
-def render_data_limitations():
-    st.subheader("데이터 연결 및 분석 한계")
+def render_data_limitations(language="ko"):
+
+    labels = t(language, "limitations")
+
+    st.subheader(labels["title"])
 
     rows = [
         {
-            "평가 항목": "기온",
-            "현재 상태": "NASA POWER 일별 기온으로 비교"
+            labels["item"]: labels["temperature"],
+            labels["status"]: labels["temperature_status"]
         },
         {
-            "평가 항목": "강수량",
-            "현재 상태": "NASA POWER 일별 및 재배 기간 누적값"
+            labels["item"]: labels["rainfall"],
+            labels["status"]: labels["rainfall_status"]
         },
         {
-            "평가 항목": "일사량",
-            "현재 상태": "NASA POWER 일별 일사량"
+            labels["item"]: labels["solar"],
+            labels["status"]: labels["solar_status"]
         },
         {
-            "평가 항목": "고도",
-            "현재 상태": "별도 고도 데이터의 출처와 정확도 확인 필요"
+            labels["item"]: labels["elevation"],
+            labels["status"]: labels["elevation_status"]
         },
         {
-            "평가 항목": "경사도",
-            "현재 상태": "여러 지점의 고도 자료로 계산 필요"
+            labels["item"]: labels["slope"],
+            labels["status"]: labels["slope_status"]
         },
         {
-            "평가 항목": "토양 수분",
-            "현재 상태": "토양 수분 관측 또는 위성 자료 연결 필요"
+            labels["item"]: labels["soil_moisture"],
+            labels["status"]: labels["soil_moisture_status"]
         },
         {
-            "평가 항목": "토양 건강",
-            "현재 상태": "토양 유기물, pH, 배수성 자료 필요"
+            labels["item"]: labels["soil_health"],
+            labels["status"]: labels["soil_health_status"]
         },
         {
-            "평가 항목": "재배 달력",
-            "현재 상태": "대표 작형 기준이며 지역별 검증 필요"
+            labels["item"]: labels["calendar"],
+            labels["status"]: labels["calendar_status"]
         },
         {
-            "평가 항목": "농민 우선순위",
-            "현재 상태": "수익성, 물 절약, 안정성 등 선택 기준 추가 필요"
+            labels["item"]: labels["preferences"],
+            labels["status"]: labels["preferences_status"]
         },
         {
-            "평가 항목": "수확량",
-            "현재 상태": "수확량 예측 모델 미구현"
+            labels["item"]: labels["yield"],
+            labels["status"]: labels["yield_status"]
         }
     ]
 
