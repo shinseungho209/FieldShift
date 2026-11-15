@@ -1,125 +1,194 @@
 import streamlit as st
 import pandas as pd
 
-SCORE = "온도 조건 일치율"
 
+def safe_text(value):
+    if pd.isna(value):
+        return "자료 없음"
 
-def _format_percent(value):
-    return f"{value:.1f}%" if pd.notna(value) else "계산 불가"
+    text = str(value)
+
+    text = text.replace("~~", "～")
+    text = text.replace("~", "～")
+
+    return text
 
 
 def render_rotation_ui(region, rotation_results):
-    """
-    윤작 전략 비교 화면.
-    첫 번째 행을 '현재 방식(기준)'으로 보고, 나머지 전략과 비교한다.
-    제목(st.header)은 app.py 에서 이미 표시하므로 여기서는 만들지 않는다.
-    """
+    st.subheader("자동 생성된 재배 전략 후보")
 
     if rotation_results.empty:
-        st.warning("비교할 윤작 전략이 없습니다.")
+        st.warning(
+            "현재 데이터 조건에서 생성된 후보가 없습니다."
+        )
         return
 
-    df = pd.DataFrame({
-        "전략": (
-            rotation_results["strategy"]
-            + ": "
-            + rotation_results["crop_sequence"]
-        ),
-        "작물 순서": rotation_results["crop_sequence"],
-        SCORE: pd.to_numeric(
-            rotation_results["temperature_score"],
-            errors="coerce"
-        ),
-    }).reset_index(drop=True)
-
-    baseline_score = df.loc[0, SCORE]
-
-    st.write(
-        "현재 재배 방식과 대안 전략을 비교합니다. "
-        "(작은 숫자 = 현재 방식 대비 변화)"
+    st.caption(
+        f"{region}의 NASA 기후 데이터와 작물 조건을 활용한 후보입니다."
     )
 
-    # 전략 카드: 한 줄에 3개씩, 전략이 3개보다 많아도 모두 표시
-    for start in range(0, len(df), 3):
+    st.info(
+        "기온 기반 순위 점수는 재배 기간의 일평균 기온이 "
+        "입력된 온도 범위에 들어온 날의 비율입니다. "
+        "수확량이나 실제 재배 성공 확률을 뜻하지 않습니다."
+    )
 
-        cols = st.columns(3)
+    for _, row in rotation_results.iterrows():
 
-        for col, (i, row) in zip(
-            cols, df.iloc[start:start + 3].iterrows()
-        ):
-            with col:
-                with st.container(border=True):
+        with st.container(border=True):
 
-                    st.subheader(row["전략"])
+            st.subheader(
+                f"{int(row['rank'])}위 · {row['strategy']}"
+            )
 
-                    st.caption(
-                        "기준 (현재 방식)" if i == 0 else "대안 전략"
-                    )
+            col1, col2 = st.columns(2)
 
-                    st.write(f"작물 순서: {row['작물 순서']}")
+            col1.metric(
+                "온도 조건 일치율",
+                f"{row['temperature_score']:.1f}%"
+            )
 
-                    delta = None
+            col2.metric(
+                "포함 작물 수",
+                f"{int(row['crop_count'])}개"
+            )
 
-                    if (
-                        i != 0
-                        and pd.notna(row[SCORE])
-                        and pd.notna(baseline_score)
-                    ):
-                        delta = f"{row[SCORE] - baseline_score:+.1f}%p"
+            st.write(
+                f"작물 조합: {safe_text(row['crop_sequence'])}"
+            )
 
-                    st.metric(
-                        SCORE,
-                        _format_percent(row[SCORE]),
-                        delta=delta
-                    )
+            st.caption(
+                f"재배 일정: {safe_text(row['calendar_status'])}"
+            )
 
-    st.subheader("한눈에 비교")
+            st.caption(
+                f"온도 기준 신뢰도: "
+                f"{safe_text(row['temperature_confidence'])}"
+            )
 
-    # 전략 이름이 길어서 가로 막대로 표시
+            st.caption(
+                f"재배 달력 신뢰도: "
+                f"{safe_text(row['calendar_confidence'])}"
+            )
+
+            st.write("물 요구 특성")
+
+            st.write(
+                safe_text(row["water_requirement"])
+            )
+
+            st.write("토양 조건")
+
+            st.write(
+                safe_text(row["soil_condition"])
+            )
+
+            st.caption(
+                f"평가 방식: {safe_text(row['analysis_status'])}"
+            )
+
+            notes = safe_text(row.get("notes", ""))
+
+            if notes and notes != "자료 없음":
+                with st.expander("작물별 참고 사항"):
+                    st.write(notes)
+
+    st.subheader("전략별 기온 기반 점수 비교")
+
+    chart_data = rotation_results[
+        ["strategy", "ranking_score"]
+    ].copy()
+
+    chart_data = chart_data.set_index("strategy")
+
     st.bar_chart(
-        df.set_index("전략")[[SCORE]],
+        chart_data,
         horizontal=True
     )
 
-    valid_df = df.dropna(subset=[SCORE])
+    with st.expander("전체 후보 데이터 보기"):
 
-    if not valid_df.empty:
+        display_data = rotation_results.copy()
 
-        best_index = valid_df[SCORE].idxmax()
-        best = valid_df.loc[best_index]
+        text_columns = [
+            "strategy",
+            "crop_sequence",
+            "calendar_status",
+            "temperature_confidence",
+            "calendar_confidence",
+            "water_requirement",
+            "soil_condition",
+            "analysis_status",
+            "notes"
+        ]
 
-        if best_index == 0:
-            st.info(
-                f"{region}: 온도 지표상 현재 방식이 가장 높습니다 "
-                f"({_format_percent(best[SCORE])})."
-            )
-        else:
-            st.info(
-                f"{region}: 온도 지표상 가장 높은 전략은 "
-                f"{best['전략']} 입니다."
-            )
-
-            if pd.notna(baseline_score):
-                st.write(
-                    f"현재 방식 대비 {SCORE} "
-                    f"{best[SCORE] - baseline_score:+.1f}%p"
+        for column in text_columns:
+            if column in display_data.columns:
+                display_data[column] = (
+                    display_data[column].apply(safe_text)
                 )
 
-        st.caption(
-            "이 결과는 온도 지표만을 비교한 것입니다. "
-            "종합적인 윤작 추천이나 실제 수확량 예측이 아닙니다."
-        )
-
-    with st.expander("상세 표 보기"):
-
         st.dataframe(
-            df,
-            hide_index=True,
-            width="stretch"
+            display_data,
+            use_container_width=True,
+            hide_index=True
         )
 
     st.warning(
-        "현재 분석은 온도 조건만 반영합니다. "
-        "폭염·가뭄·병해충 위험도와 소득지수는 "
-        "검증된 데이터 및 모델 확보 후 추가할 예정입니다."
+        "현재 순위는 기온 조건과 월별 재배 일정에 기반합니다. "
+        "강수량은 참고 정보이며 토양 수분, 토양 건강, 병해충, "
+        "경제성, 실제 수확량은 점수에 포함하지 않습니다."
+    )
+
+
+def render_data_limitations():
+    st.subheader("데이터 연결 및 분석 한계")
+
+    rows = [
+        {
+            "평가 항목": "기온",
+            "현재 상태": "NASA POWER 일별 기온으로 비교"
+        },
+        {
+            "평가 항목": "강수량",
+            "현재 상태": "NASA POWER 일별 및 재배 기간 누적값"
+        },
+        {
+            "평가 항목": "일사량",
+            "현재 상태": "NASA POWER 일별 일사량"
+        },
+        {
+            "평가 항목": "고도",
+            "현재 상태": "별도 고도 데이터의 출처와 정확도 확인 필요"
+        },
+        {
+            "평가 항목": "경사도",
+            "현재 상태": "여러 지점의 고도 자료로 계산 필요"
+        },
+        {
+            "평가 항목": "토양 수분",
+            "현재 상태": "토양 수분 관측 또는 위성 자료 연결 필요"
+        },
+        {
+            "평가 항목": "토양 건강",
+            "현재 상태": "토양 유기물, pH, 배수성 자료 필요"
+        },
+        {
+            "평가 항목": "재배 달력",
+            "현재 상태": "대표 작형 기준이며 지역별 검증 필요"
+        },
+        {
+            "평가 항목": "농민 우선순위",
+            "현재 상태": "수익성, 물 절약, 안정성 등 선택 기준 추가 필요"
+        },
+        {
+            "평가 항목": "수확량",
+            "현재 상태": "수확량 예측 모델 미구현"
+        }
+    ]
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        hide_index=True
     )

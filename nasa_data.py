@@ -1,4 +1,3 @@
-
 import requests
 import pandas as pd
 
@@ -11,14 +10,13 @@ def get_nasa_power_data(
 ):
     """
     NASA POWER에서 일별 기온, 강수량, 일사량을 수집한다.
+    일사량은 MJ/m²/day에서 kWh/m²/day로 변환한다.
     """
 
     url = "https://power.larc.nasa.gov/api/temporal/daily/point"
 
     params = {
-        "parameters": (
-            "T2M,PRECTOTCORR,ALLSKY_SFC_SW_DWN"
-        ),
+        "parameters": "T2M,PRECTOTCORR,ALLSKY_SFC_SW_DWN",
         "community": "AG",
         "longitude": longitude,
         "latitude": latitude,
@@ -32,12 +30,19 @@ def get_nasa_power_data(
         params=params,
         timeout=60
     )
-
     response.raise_for_status()
 
     result = response.json()
-
     parameters = result["properties"]["parameter"]
+
+    solar_mj = pd.to_numeric(
+        pd.Series(
+            list(parameters["ALLSKY_SFC_SW_DWN"].values())
+        ),
+        errors="coerce"
+    )
+
+    solar_mj = solar_mj.mask(solar_mj <= -900)
 
     df = pd.DataFrame({
         "date": pd.to_datetime(
@@ -48,34 +53,35 @@ def get_nasa_power_data(
         "precipitation_mm_day": list(
             parameters["PRECTOTCORR"].values()
         ),
-        "solar_kwh_m2_day": list(
-            parameters["ALLSKY_SFC_SW_DWN"].values()
-        )
+        "solar_kwh_m2_day": solar_mj / 3.6
     })
 
-    # NASA POWER 결측값 처리
-    columns = [
+    numeric_columns = [
         "temperature_C",
         "precipitation_mm_day",
         "solar_kwh_m2_day"
     ]
 
-    for column in columns:
+    for column in numeric_columns:
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
         )
 
-        df.loc[df[column] <= -900, column] = float("nan")
+        df.loc[
+            df[column] <= -900,
+            column
+        ] = float("nan")
 
-    df = df.sort_values("date").reset_index(drop=True)
+    df = df.sort_values(
+        "date"
+    ).reset_index(drop=True)
 
     return df
 
 
 if __name__ == "__main__":
 
-    # 전북특별자치도 김제시 좌표
     latitude = 35.8036
     longitude = 126.8808
 
